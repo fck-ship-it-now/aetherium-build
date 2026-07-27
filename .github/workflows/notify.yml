@@ -3,15 +3,11 @@ name: "📡 Notify"
 on:
   push:
     branches:
-      - '**'   # explicit: match every branch push (required once tags-ignore is set)
+      - '**'
     tags-ignore:
-      - '**'   # ignore tag pushes (e.g. the "cache" release tag) — only real branch commits notify
+      - '**'
 
 jobs:
-
-  # ======================================================
-  # 📌 PUSH EVENT
-  # ======================================================
   on-push:
     name: "Push"
     runs-on: ubuntu-latest
@@ -24,7 +20,7 @@ jobs:
         env:
           TELEGRAM_BOT_TOKEN: ${{ secrets.TELEGRAM_BOT_TOKEN }}
           TELEGRAM_CHAT_ID: ${{ vars.TELEGRAM_CHAT_ID }}
-          TELEGRAM_THREAD_ID_EVENT: ${{ vars.TELEGRAM_THREAD_ID_EVENT }}
+          # TELEGRAM_THREAD_ID_EVENT dihapus dari env sini karena tidak dipakai
           COMMIT:     ${{ github.sha }}
           BRANCH:     ${{ github.ref_name }}
           MESSAGE:    ${{ github.event.head_commit.message }}
@@ -34,7 +30,7 @@ jobs:
           source "$GITHUB_WORKSPACE/functions.sh"
           source "$GITHUB_WORKSPACE/release/telegram/config.sh"
           source "$GITHUB_WORKSPACE/release/telegram/common.sh"
-          TELEGRAM_THREAD_ID="$TELEGRAM_THREAD_ID_EVENT"
+          
           SHORT_COMMIT="${COMMIT:0:7}"
           TITLE=$(printf '%s' "$MESSAGE" | head -1)
           BODY=$(printf '%s' "$MESSAGE" | tail -n +3)
@@ -54,9 +50,9 @@ jobs:
             TEXT=$(printf '%s\n\nMessage:\n<pre>%s</pre>' "$TEXT" "$BODY_ESC")
           fi
 
+          # Baris -d "message_thread_id=..." sudah dihapus di bawah ini
           if telegram_api_call "sendMessage" /tmp/tg_push_response.json "Push notify" \
                   -d "chat_id=${TELEGRAM_CHAT_ID}" \
-                  -d "message_thread_id=${TELEGRAM_THREAD_ID}" \
                   -d "parse_mode=HTML" \
                   -d "disable_web_page_preview=true" \
                   --data-urlencode "text=${TEXT}"; then
