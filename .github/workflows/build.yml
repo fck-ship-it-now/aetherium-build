@@ -205,7 +205,7 @@ jobs:
           ${{ inputs.vanilla }}  && variants+=("{\"kernel_variant\":\"VANILLA\",\"susfs\":false}")
           ${{ inputs.resukisu }} && variants+=("{\"kernel_variant\":\"RESUKISU\",\"susfs\":${SUSFS_ENABLED}}")
           ${{ inputs.sukisu }}   && variants+=("{\"kernel_variant\":\"SUKISU\",\"susfs\":${SUSFS_ENABLED}}")
-          ${{ inputs.ksunext }} && variants+=("{\"kernel_variant\":\"KSUNEXT\",\"susfs\":${SUSFS_ENABLED}}")
+          ${{ inputs.ksunext }}  && variants+=("{\"kernel_variant\":\"KSUNEXT\",\"susfs\":${SUSFS_ENABLED}}")
 
           if [ ${#variants[@]} -eq 0 ]; then
             echo "No root solutions selected!"
@@ -218,7 +218,7 @@ jobs:
           # Single source of truth for the ADDONS list — reused by Start-Build
           # and notify-channel via this job's output, instead of each job
           # rebuilding the same string from inputs independently.
-          ADDONS="${{ inputs.bbrv3 && 'bbrv3,' || '' }}${{ inputs.bbg && 'bbg,' || '' }}${{ inputs.rekernel && 'rekernel,' || '' }}${{ inputs.droidspaces && 'droidspaces,' || '' }}${{ inputs.bore && 'bore,' || '' }}${{ inputs.adios && 'adios,' || '' }}${{ inputs.kasumi && 'kasumi,' || '' }}${{ inputs.ntsync && 'ntsync,' || '' }}${{ inputs.lz4zstd && 'lz4zstd,' || '' }}${{ inputs.lz4kd && 'lz4kd,' || '' }}${{ inputs.mountless_engine != 'none' && format('{0},', inputs.mountless_engine) || '' }}${{ inputs.le9uo && 'le9uo,' || '' }}${{ inputs.kcompressd && 'kcompressd,' || '' }}${{ inputs.zram_ir && 'zram_ir,' || '' }}"
+          ADDONS="${{ inputs.bbrv3 && 'bbrv3,' || '' }}${ { inputs.bbg && 'bbg,' || '' }}${{ inputs.rekernel && 'rekernel,' || '' }}${{ inputs.droidspaces && 'droidspaces,' || '' }}${{ inputs.bore && 'bore,' || '' }}${{ inputs.adios && 'adios,' || '' }}${{ inputs.kasumi && 'kasumi,' || '' }}${{ inputs.ntsync && 'ntsync,' || '' }}${{ inputs.lz4zstd && 'lz4zstd,' || '' }}${{ inputs.lz4kd && 'lz4kd,' || '' }}${{ inputs.mountless_engine != 'none' && format('{0},', inputs.mountless_engine) || '' }}${{ inputs.le9uo && 'le9uo,' || '' }}${{ inputs.kcompressd && 'kcompressd,' || '' }}${{ inputs.zram_ir && 'zram_ir,' || '' }}"
           echo "addons=${ADDONS}" >> $GITHUB_OUTPUT
 
           # "/" -> "-" so this is safe to use as a filesystem path component
@@ -249,7 +249,7 @@ jobs:
 
     env:
       PERSONAL_TOKEN:              ${{ secrets.PERSONAL_TOKEN }}
-      TELEGRAM_BOT_TOKEN: ${{ secrets.TELEGRAM_BOT_TOKEN }}
+      TELEGRAM_BOT_TOKEN:          ${{ secrets.TELEGRAM_BOT_TOKEN }}
       TELEGRAM_CHAT_ID:            ${{ vars.TELEGRAM_CHAT_ID }}
       TELEGRAM_THREAD_ID_TEST:     ${{ vars.TELEGRAM_THREAD_ID_TEST }}
       TELEGRAM_THREAD_ID_RELEASE:  ${{ vars.TELEGRAM_THREAD_ID_RELEASE }}
@@ -261,11 +261,11 @@ jobs:
       # output). Passed through so restore-path log messages can say which
       # case they're in instead of a bare "restored from cache".
       CACHE_REFRESHED:             ${{ needs.prepare-matrix.outputs.cache_refreshed }}
-      KERNEL_VARIANT:               ${{ matrix.kernel_variant }}
+      KERNEL_VARIANT:              ${{ matrix.kernel_variant }}
       SUSFS_ENABLED:               ${{ matrix.susfs }}
       KERNEL_VERSION:              ${{ inputs.kernel_version }}
       CUSTOM_KERNEL_NAME:          ${{ inputs.custom_kernel_name }}
-      LTO_MODE:                  ${{ inputs.lto_mode }}
+      LTO_MODE:                    ${{ inputs.lto_mode }}
       RUN_MODE:                    ${{ inputs.run_mode }}
       DRY_RUN:                     ${{ inputs.run_mode == 'Dry Run' }}
       BUILD_SYSTEM:                ${{ inputs.build_system }}
@@ -293,7 +293,7 @@ jobs:
           sudo mv /opt/ghc                 /tmp/_trash_ghc           2>/dev/null || true
           sudo mv /usr/lib/jvm             /tmp/_trash_jvm           2>/dev/null || true
           sudo mv /usr/share/swift         /tmp/_trash_swift         2>/dev/null || true
-          sudo mv /usr/local/share/powershell /tmp/_trash_pwsh      2>/dev/null || true
+          sudo mv /usr/local/share/powershell /tmp/_trash_pwsh       2>/dev/null || true
           (sudo nice -n 19 ionice -c 3 rm -rf \
             /tmp/_trash_dotnet /tmp/_trash_android /tmp/_trash_ghc \
             /tmp/_trash_jvm /tmp/_trash_swift /tmp/_trash_pwsh \
@@ -313,9 +313,9 @@ jobs:
           build-system:   ${{ inputs.build_system }}
           kernel-version: ${{ inputs.kernel_version }}
           ref-name:       ${{ needs.prepare-matrix.outputs.safe_ref }}
-          kernel-variant:  ${{ matrix.kernel_variant }}
+          kernel-variant: ${{ matrix.kernel_variant }}
           susfs:          ${{ matrix.susfs }}
-          lto-mode:     ${{ inputs.lto_mode }}
+          lto-mode:       ${{ inputs.lto_mode }}
           gh-token:       ${{ secrets.PERSONAL_TOKEN }}
 
       - name: "Disk Usage"
@@ -390,7 +390,7 @@ jobs:
         uses: ./.github/actions/save-build-caches
         with:
           build-system:   ${{ inputs.build_system }}
-          lto-mode:     ${{ inputs.lto_mode }}
+          lto-mode:       ${{ inputs.lto_mode }}
           # Both filenames share the same field order — {type}-data,
           # kernel_version, kernel_variant(+SUSFS), clang variant (upper) +
           # lto_mode, ref — so the two asset types line up visually in the
@@ -439,9 +439,9 @@ jobs:
       - name: "Send Channel Post"
         env:
           TELEGRAM_BOT_TOKEN: ${{ secrets.TELEGRAM_BOT_TOKEN }}
-          TELEGRAM_CHAT_ID:           ${{ vars.TELEGRAM_CHAT_ID }}
-          TELEGRAM_CHANNEL_ID:        ${{ vars.TELEGRAM_CHANNEL_ID }}
-          TELEGRAM_THREAD_ID_RELEASE: ${{ vars.TELEGRAM_THREAD_ID_RELEASE }}
+          TELEGRAM_CHAT_ID:            ${{ vars.TELEGRAM_CHAT_ID }}
+          TELEGRAM_CHANNEL_ID:         ${{ vars.TELEGRAM_CHANNEL_ID }}
+          TELEGRAM_THREAD_ID_RELEASE:  ${{ vars.TELEGRAM_THREAD_ID_RELEASE }}
           LUMINAIRE_PATCH_DIR: ${{ github.workspace }}
           LINKS_DIR:           /tmp/variant-links
           KERNEL_VERSION:      ${{ inputs.kernel_version }}
