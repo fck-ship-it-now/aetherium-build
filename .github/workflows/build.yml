@@ -1,0 +1,461 @@
+name: "⚔️ Aetherium-Builder"
+run-name: "${{ inputs.run_mode == 'Dry Run' && '🧪' || inputs.run_mode == 'Warm Run' && '🔥' || inputs.run_mode == 'Build' && '🔬' || '🚀' }} ${{ inputs.kernel_version }} | ${{ inputs.lto_mode != 'NONE' && format('{0} LTO x ', inputs.lto_mode) || '' }}${{ contains(inputs.build_system, 'AOSP') && 'AOSP' || contains(inputs.build_system, 'Cirrus') && 'Cirrus' || contains(inputs.build_system, 'Neutron') && 'Neutron' || contains(inputs.build_system, 'WeebX') && 'WeebX' || 'Zyc' }} (${{ inputs.run_mode }})"
+
+on:
+  workflow_dispatch:
+    inputs:
+      build_system:
+        description: "Build System"
+        type: choice
+        default: "Make - Neutron"
+        options:
+          - "Make - AOSP"
+          - "Make - Neutron"
+          - "Make - WeebX"
+          - "Make - Zyc"
+      kernel_version:
+        description: "Kernel Version"
+        type: choice
+        default: "6.1"
+        options:
+          - "5.10"
+          - "5.15"
+          - "6.1"
+          - "6.6"
+          - "6.12"
+      ksunext:
+        description: "KernelSU-Next"
+        type: boolean
+        default: true
+      resukisu:
+        description: "ReSukiSU"
+        type: boolean
+        default: true
+      sukisu:
+        description: "SukiSU-Ultra"
+        type: boolean
+        default: true
+      vanilla:
+        description: "Vanilla"
+        type: boolean
+        default: true
+      susfs:
+        description: "SuSFS"
+        type: choice
+        default: "enable"
+        options:
+          - "enable"
+          - "disable"
+      mountless_engine:
+        description: "Mountless Engine"
+        type: choice
+        default: "none"
+        options:
+          - "none"
+          - "nomount"
+          - "zeromount"
+      bbrv3:
+        description: "BBRv3"
+        type: boolean
+        default: true
+      bbg:
+        description: "BBG"
+        type: boolean
+        default: true
+      rekernel:
+        description: "Re:Kernel"
+        type: boolean
+        default: true
+      droidspaces:
+        description: "Droidspaces"
+        type: boolean
+        default: true
+      bore:
+        description: "BORE (CPU scheduler)"
+        type: boolean
+        default: true
+      adios:
+        description: "ADIOS (I/O scheduler)"
+        type: boolean
+        default: true
+      kasumi:
+        description: "Kasumi (Experimental)"
+        type: boolean
+        default: false
+      ntsync:
+        description: "NTSync (Wine/Winlator compatibility)"
+        type: boolean
+        default: true
+      lz4zstd:
+        description: "LZ4 1.10.0 + ZSTD 1.5.7 (ZRAM compression bump)"
+        type: boolean
+        default: true
+      lz4kd:
+        description: "LZ4KD (ZRAM compression optimization)"
+        type: boolean
+        default: true
+      le9uo:
+        description: "le9uo EXPERIMENTAL(Prevent system freezes)"
+        type: boolean
+        default: false  
+      kcompressd:
+        description: "kcompressd - optimize zram algorithms"
+        type: boolean
+        default: true
+      zram_ir:
+        description: "Zram_ir - add multi_comp"
+        type: boolean
+        default: true   
+      lto_mode:
+        description: "LTO"
+        type: choice
+        default: "THIN"
+        options:
+          - "NONE"
+          - "THIN"
+          - "FULL"
+      run_mode:
+        description: "Run Mode"
+        type: choice
+        default: "Warm Run"
+        options:
+          - "Dry Run"
+          - "Warm Run"
+          - "Build"
+          - "Release"
+      changelog:
+        description: "Changelog on Post"
+        type: string
+        default: ""
+      update_arsenal:
+        description: "Update Arsenal"
+        type: choice
+        default: "no"
+        options:
+          - "yes"
+          - "no"
+      custom_kernel_name:
+        description: "Custom Kernel Name"
+        type: string
+        default: "Aetherium4.0-Singularity+"
+
+# No workflow-level concurrency lock: each dispatch is left free to run
+# in parallel with others (including same kernel_version), so different
+# variant/LTO/build-system combos can be tried side by side. This is
+# safe for kernel/<android_ver>-<kernel_version>-lts/manifest.json — kernel/checkpoint/engine.sh already
+# handles concurrent writers via its fetch-rebase-push retry loop
+# (originally built for the matrix jobs within a single run, but it
+# doesn't care whether the writer is from this run or another one).
+# ccache-ECS is a remote cache, also fine under concurrent access.
+# Re-add a `concurrency:` block here if runner-minute usage or GH API
+# rate limits from many simultaneous runs become a real problem.
+
+env:
+  DEBIAN_FRONTEND: noninteractive
+  # Single source of truth for "is this a Make build" — referenced via
+  # env.IS_MAKE in step-level `if:` conditions below. Job-level `env:` blocks
+  # can't use the env context to reference this (GitHub Actions limitation),
+  # so those re-derive startsWith(inputs.build_system, 'Make') inline instead.
+  IS_MAKE: ${{ startsWith(inputs.build_system, 'Make') }}
+
+jobs:
+
+  # ======================================================
+  # PREPARE MATRIX + ARSENAL
+  # ======================================================
+  prepare-matrix:
+    name: "Prepare Arsenal"
+    runs-on: ubuntu-latest
+    outputs:
+      matrix: ${{ steps.set.outputs.matrix }}
+      addons: ${{ steps.set.outputs.addons }}
+      # github.ref_name as-is (e.g. "test/luminaire-kernel-source") breaks
+      # anywhere it's used as a filesystem path component — the "/" turns
+      # ccache-prefix/lto-asset-name into a bogus extra directory level tar
+      # can't write to. Sanitized once here, reused by Start-Build instead
+      # of every consumer re-deriving (and re-risking) it independently.
+      safe_ref: ${{ steps.set.outputs.safe_ref }}
+      # Whether Prepare Arsenal just force-refreshed the shared clang/kernel/AK3
+      # caches this run. Start-Build's own USE_*_CACHE flags are hardcoded
+      # "true" (it always restores — never independently re-downloads), so
+      # this is the only way the scripts it runs can tell an honestly-fresh
+      # restore apart from a pre-existing-cache restore in their log output.
+      cache_refreshed: ${{ inputs.update_arsenal == 'yes' }}
+
+    env:
+      PERSONAL_TOKEN:   ${{ secrets.PERSONAL_TOKEN }}
+      USE_KERNEL_CACHE: ${{ inputs.update_arsenal != 'yes' }}
+      USE_AK3_CACHE:    ${{ inputs.update_arsenal != 'yes' }}
+      USE_CLANG_CACHE:  ${{ inputs.update_arsenal != 'yes' }}
+      KERNEL_VERSION:   ${{ inputs.kernel_version }}
+      BUILD_SYSTEM:     ${{ inputs.build_system }}
+      CCACHE_DIR:       ${{ startsWith(inputs.build_system, 'Make') && format('{0}/.ccache', github.workspace) || '' }}
+      CCACHE_MAXSIZE:   ${{ startsWith(inputs.build_system, 'Make') && '900M' || '' }}
+
+    steps:
+      - name: "Checkout"
+        uses: actions/checkout@v7
+
+      - name: "Build Variant Matrix"
+        id: set
+        env:
+          SUSFS_ENABLED: ${{ inputs.susfs == 'enable' }}
+        run: |
+          variants=()
+          ${{ inputs.vanilla }}  && variants+=("{\"kernel_variant\":\"VANILLA\",\"susfs\":false}")
+          ${{ inputs.resukisu }} && variants+=("{\"kernel_variant\":\"RESUKISU\",\"susfs\":${SUSFS_ENABLED}}")
+          ${{ inputs.sukisu }}   && variants+=("{\"kernel_variant\":\"SUKISU\",\"susfs\":${SUSFS_ENABLED}}")
+          ${{ inputs.ksunext }} && variants+=("{\"kernel_variant\":\"KSUNEXT\",\"susfs\":${SUSFS_ENABLED}}")
+
+          if [ ${#variants[@]} -eq 0 ]; then
+            echo "No root solutions selected!"
+            exit 1
+          fi
+
+          matrix_json=$(printf '%s\n' "${variants[@]}" | jq -cs '{include: .}')
+          echo "matrix=${matrix_json}" >> $GITHUB_OUTPUT
+
+          # Single source of truth for the ADDONS list — reused by Start-Build
+          # and notify-channel via this job's output, instead of each job
+          # rebuilding the same string from inputs independently.
+          ADDONS="${{ inputs.bbrv3 && 'bbrv3,' || '' }}${{ inputs.bbg && 'bbg,' || '' }}${{ inputs.rekernel && 'rekernel,' || '' }}${{ inputs.droidspaces && 'droidspaces,' || '' }}${{ inputs.bore && 'bore,' || '' }}${{ inputs.adios && 'adios,' || '' }}${{ inputs.kasumi && 'kasumi,' || '' }}${{ inputs.ntsync && 'ntsync,' || '' }}${{ inputs.lz4zstd && 'lz4zstd,' || '' }}${{ inputs.lz4kd && 'lz4kd,' || '' }}${{ inputs.mountless_engine != 'none' && format('{0},', inputs.mountless_engine) || '' }}${{ inputs.le9uo && 'le9uo,' || '' }}${{ inputs.kcompressd && 'kcompressd,' || '' }}${{ inputs.zram_ir && 'zram_ir,' || '' }}"
+          echo "addons=${ADDONS}" >> $GITHUB_OUTPUT
+
+          # "/" -> "-" so this is safe to use as a filesystem path component
+          # (cache asset filenames) wherever ref_name is needed downstream.
+          SAFE_REF="$(echo '${{ github.ref_name }}' | tr '/' '-')"
+          echo "safe_ref=${SAFE_REF}" >> $GITHUB_OUTPUT
+
+      - name: "Setup Arsenal"  # restores clang+arsenal cache (auto-saved if missing), then runs arsenal.sh
+        id: setup-arsenal
+        uses: ./.github/actions/setup-arsenal
+        with:
+          build-system:   ${{ inputs.build_system }}
+          kernel-version: ${{ inputs.kernel_version }}
+          update-arsenal: ${{ inputs.update_arsenal }}
+          gh-token:       ${{ secrets.PERSONAL_TOKEN }}
+
+  # ======================================================
+  # BUILD VARIANT (parallel)
+  # ======================================================
+  Start-Build:
+    name: "Build Kernel (${{ matrix.kernel_variant }}${{ matrix.susfs && '+SUSFS' || '' }})"
+    runs-on: ubuntu-latest
+    timeout-minutes: 90
+    needs: prepare-matrix
+    strategy:
+      matrix: ${{ fromJson(needs.prepare-matrix.outputs.matrix) }}
+      fail-fast: false
+
+    env:
+      PERSONAL_TOKEN:              ${{ secrets.PERSONAL_TOKEN }}
+      TELEGRAM_BOT_TOKEN: ${{ secrets.TELEGRAM_BOT_TOKEN }}
+      TELEGRAM_CHAT_ID:            ${{ vars.TELEGRAM_CHAT_ID }}
+      TELEGRAM_THREAD_ID_TEST:     ${{ vars.TELEGRAM_THREAD_ID_TEST }}
+      TELEGRAM_THREAD_ID_RELEASE:  ${{ vars.TELEGRAM_THREAD_ID_RELEASE }}
+      USE_KERNEL_CACHE:            "true"
+      USE_AK3_CACHE:               "true"
+      USE_CLANG_CACHE:             "true"
+      # Always restores — Prepare Arsenal is the single choke point that
+      # decides whether the shared cache is fresh (see its cache_refreshed
+      # output). Passed through so restore-path log messages can say which
+      # case they're in instead of a bare "restored from cache".
+      CACHE_REFRESHED:             ${{ needs.prepare-matrix.outputs.cache_refreshed }}
+      KERNEL_VARIANT:               ${{ matrix.kernel_variant }}
+      SUSFS_ENABLED:               ${{ matrix.susfs }}
+      KERNEL_VERSION:              ${{ inputs.kernel_version }}
+      CUSTOM_KERNEL_NAME:          ${{ inputs.custom_kernel_name }}
+      LTO_MODE:                  ${{ inputs.lto_mode }}
+      RUN_MODE:                    ${{ inputs.run_mode }}
+      DRY_RUN:                     ${{ inputs.run_mode == 'Dry Run' }}
+      BUILD_SYSTEM:                ${{ inputs.build_system }}
+      ADDONS:                      ${{ needs.prepare-matrix.outputs.addons }}
+      CCACHE_DIR:                  ${{ startsWith(inputs.build_system, 'Make') && format('{0}/.ccache', github.workspace) || '' }}
+      CCACHE_MAXSIZE:              ${{ startsWith(inputs.build_system, 'Make') && '900M' || '' }}
+
+    steps:
+      - name: "Checkout"
+        uses: actions/checkout@v7
+        with:
+          # v6+ persists creds via a global includeIf.gitdir config pointing
+          # at a file under $RUNNER_TEMP, not .git/config in this repo — so
+          # it can't be locally unset by a later step (see kernel/checkpoint/engine.sh
+          # for the fallout this caused). Nothing else in this job needs git
+          # auth against LuminaireProtocol itself: kernel/addon sources are
+          # public clones, and kernel/checkpoint/engine.sh brings its own
+          # PERSONAL_TOKEN-embedded remote for its push.
+          persist-credentials: false
+
+      - name: "Free Disk Space"
+        run: |
+          sudo mv /usr/share/dotnet        /tmp/_trash_dotnet        2>/dev/null || true
+          sudo mv /usr/local/lib/android   /tmp/_trash_android       2>/dev/null || true
+          sudo mv /opt/ghc                 /tmp/_trash_ghc           2>/dev/null || true
+          sudo mv /usr/lib/jvm             /tmp/_trash_jvm           2>/dev/null || true
+          sudo mv /usr/share/swift         /tmp/_trash_swift         2>/dev/null || true
+          sudo mv /usr/local/share/powershell /tmp/_trash_pwsh      2>/dev/null || true
+          (sudo nice -n 19 ionice -c 3 rm -rf \
+            /tmp/_trash_dotnet /tmp/_trash_android /tmp/_trash_ghc \
+            /tmp/_trash_jvm /tmp/_trash_swift /tmp/_trash_pwsh \
+            /var/lib/docker /var/cache/snapd /home/linuxbrew \
+          ) &
+          mkdir -p /dev/shm/ldcache
+
+      - name: "Setup Swap Space"
+        uses: thejerrybao/setup-swap-space@v1
+        with:
+          swap-size-gb: 12
+
+      - name: "Setup Build Environment"  # restore-only: clang, arsenal, ccache, lto
+        id: setup-build-env
+        uses: ./.github/actions/setup-build-env
+        with:
+          build-system:   ${{ inputs.build_system }}
+          kernel-version: ${{ inputs.kernel_version }}
+          ref-name:       ${{ needs.prepare-matrix.outputs.safe_ref }}
+          kernel-variant:  ${{ matrix.kernel_variant }}
+          susfs:          ${{ matrix.susfs }}
+          lto-mode:     ${{ inputs.lto_mode }}
+          gh-token:       ${{ secrets.PERSONAL_TOKEN }}
+
+      - name: "Disk Usage"
+        run: df -h && du -sh ~/kernel-cache/ 2>/dev/null || true
+
+      - name: "Scout Upstream Refs"  # decides pinned vs candidate ref for KSU fork / SuSFS
+        if: matrix.kernel_variant != 'VANILLA'
+        run: bash kernel/checkpoint/scout.sh
+
+      - name: "Cooking (${{ matrix.kernel_variant }}${{ matrix.susfs && '+SUSFS' || '' }})"
+        id: build
+        run: bash build.sh
+
+      - name: "Upload Kernel Build Artifact"
+        # ZIP_PATH is only exported (via anykernel.sh → $GITHUB_ENV) once
+        # run_release() runs in build.sh — Warm Run mode exits main() before
+        # that point, so there's nothing to upload there. Uploaded via the
+        # built-in Actions token, no PERSONAL_TOKEN/secrets needed at all —
+        # this is what lets a fork with zero secrets configured still get
+        # its build output, instead of it only ever reaching Telegram.
+        if: always() && steps.build.outcome == 'success' && env.ZIP_PATH != ''
+        uses: actions/upload-artifact@v7
+        with:
+          name: ${{ env.ZIP_NAME }}
+          path: ${{ env.ZIP_PATH }}
+          if-no-files-found: warn
+
+      - name: "Ccache Stats"
+        if: always() && env.IS_MAKE == 'true'
+        run: ~/ccache-bin/ccache --show-stats
+
+      - name: "Checkpoint (Promote/Blacklist)"  # updates manifest.json, files an issue on failed candidates
+        if: always() && matrix.kernel_variant != 'VANILLA' && inputs.run_mode != 'Dry Run'
+        env:
+          GH_TOKEN: ${{ secrets.PERSONAL_TOKEN }}
+        run: |
+          OUTCOME="${{ steps.build.outcome }}"
+          [ "$OUTCOME" = "success" ] && OUTCOME="success" || OUTCOME="failure"
+          case "${{ matrix.kernel_variant }}" in
+            RESUKISU)
+              if [ "${{ matrix.susfs }}" = "true" ]; then
+                COMPONENTS="resukisu susfs_resukisu"
+              else
+                COMPONENTS="resukisu"
+              fi
+              ;;
+            SUKISU)
+              if [ "${{ matrix.susfs }}" = "true" ]; then
+                COMPONENTS="sukisu_builtin susfs_sukisu"
+              else
+                COMPONENTS="sukisu"
+              fi
+              ;;
+            KSUNEXT)
+              if [ "${{ matrix.susfs }}" = "true" ]; then
+                COMPONENTS="ksunext_susfs_fork susfs_ksunext"
+              else
+                COMPONENTS="ksunext"
+              fi
+              ;;
+          esac
+          bash kernel/checkpoint/engine.sh "$OUTCOME" $COMPONENTS
+
+      - name: "Save Build Caches"  # LTO and ccache, both to GH Release
+        if: always() && env.IS_MAKE == 'true'
+        # All matrix variants upload to the same shared "cache" GH Release
+        # concurrently. A stuck/slow upload here previously ran unbounded
+        # up to the job's 90-minute timeout instead of failing fast — cap
+        # it well below that so a hang surfaces quickly instead of quietly
+        # eating most of the job's time budget.
+        timeout-minutes: 15
+        uses: ./.github/actions/save-build-caches
+        with:
+          build-system:   ${{ inputs.build_system }}
+          lto-mode:     ${{ inputs.lto_mode }}
+          # Both filenames share the same field order — {type}-data,
+          # kernel_version, kernel_variant(+SUSFS), clang variant (upper) +
+          # lto_mode, ref — so the two asset types line up visually in the
+          # Release's Assets list, and sort next to each other since the
+          # type prefix is the only difference. Both include susfs: the LTO
+          # one didn't before, which meant a SUSFS and non-SUSFS build of
+          # the same variant/clang/ref silently clobbered and restored each
+          # other's LTO cache (their compiled IR differs, since susfs
+          # patches add code that feeds into LTO). clang-variant-upper is a
+          # separate output from setup-build-env specifically for these
+          # filenames — GitHub Actions expressions have no uppercase
+          # function, and the original clang-variant output still needs to
+          # stay as-is for the clang cache key elsewhere.
+          lto-asset-name: lto-data-${{ inputs.kernel_version }}-${{ matrix.kernel_variant }}${{ matrix.susfs && '+SUSFS' || '' }}-${{ steps.setup-build-env.outputs.clang-variant-upper }}${{ inputs.lto_mode != 'NONE' && format('-{0}', inputs.lto_mode) || '' }}-${{ needs.prepare-matrix.outputs.safe_ref }}.tar.zst
+          ccache-filename: ccache-data-${{ inputs.kernel_version }}-${{ matrix.kernel_variant }}${{ matrix.susfs && '+SUSFS' || '' }}-${{ steps.setup-build-env.outputs.clang-variant-upper }}${{ inputs.lto_mode != 'NONE' && format('-{0}', inputs.lto_mode) || '' }}-${{ needs.prepare-matrix.outputs.safe_ref }}.tar.zst
+          gh-token:       ${{ secrets.PERSONAL_TOKEN }}
+
+      - name: "Upload Variant Link"  # for channel post aggregation
+        if: inputs.run_mode == 'Release'
+        uses: actions/upload-artifact@v7
+        with:
+          name: variant-link-${{ matrix.kernel_variant }}${{ matrix.susfs && '-susfs' || '' }}
+          path: variant-links/
+          if-no-files-found: ignore
+
+  # ======================================================
+  # NOTIFY CHANNEL (after all builds)
+  # ======================================================
+  notify-channel:
+    name: "Notify Channel"
+    runs-on: ubuntu-latest
+    needs: [prepare-matrix, Start-Build]
+    if: inputs.run_mode == 'Release' && always()
+
+    steps:
+      - name: "Checkout"
+        uses: actions/checkout@v7
+
+      - name: "Download Variant Links"
+        uses: actions/download-artifact@v8
+        with:
+          pattern: variant-link-*
+          path: /tmp/variant-links
+          merge-multiple: true
+
+      - name: "Send Channel Post"
+        env:
+          TELEGRAM_BOT_TOKEN: ${{ secrets.TELEGRAM_BOT_TOKEN }}
+          TELEGRAM_CHAT_ID:           ${{ vars.TELEGRAM_CHAT_ID }}
+          TELEGRAM_CHANNEL_ID:        ${{ vars.TELEGRAM_CHANNEL_ID }}
+          TELEGRAM_THREAD_ID_RELEASE: ${{ vars.TELEGRAM_THREAD_ID_RELEASE }}
+          LUMINAIRE_PATCH_DIR: ${{ github.workspace }}
+          LINKS_DIR:           /tmp/variant-links
+          KERNEL_VERSION:      ${{ inputs.kernel_version }}
+          ADDONS:              ${{ needs.prepare-matrix.outputs.addons }}
+          CHANGELOG:           ${{ inputs.changelog }}
+          # Lets channel_post.sh diff "variants selected for this run" against
+          # "variants that actually produced a download link", so a matrix
+          # job that failed (e.g. SUKISU with no promoted pin yet) surfaces
+          # as an explicit warning in the post instead of silently vanishing
+          # from the Download list while a stale manual changelog entry still
+          # claims it shipped.
+          EXPECTED_MATRIX_JSON: ${{ needs.prepare-matrix.outputs.matrix }}
+          GITHUB_SHA:          ${{ github.sha }}
+          GITHUB_SERVER_URL:   ${{ github.server_url }}
+          GITHUB_REPOSITORY:   ${{ github.repository }}
+          GITHUB_RUN_ID:       ${{ github.run_id }}
+        run: bash release/telegram/channel_post.sh
