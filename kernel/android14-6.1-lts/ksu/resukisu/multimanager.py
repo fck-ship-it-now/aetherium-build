@@ -16,10 +16,6 @@ def main():
                 '#define EXPECTED_SIZE_KOWX712 0x375\n'
                 '#define EXPECTED_HASH_KOWX712 "484fcba6e6c43b1fb09700633bf2fb4758f13cb0b2f4457b80d075084b26c588"\n'
                 '\n'
-                '// rifsxd/KernelSU-Next\n'
-                '#define EXPECTED_SIZE_KSUNEXT 0x3e6\n'
-                '#define EXPECTED_HASH_KSUNEXT "79e590113c4c4c0c222978e413a5faa801666957b1212a328e46c00c69821bf7"\n'
-                '\n'
                 '// rapli/MamboSU\n'
                 '#define EXPECTED_SIZE_MAMBOSU 0x384\n'
                 '#define EXPECTED_HASH_MAMBOSU "a9462b8b98ea1ca7901b0cbdcebfaa35f0aa95e51b01d66e6b6d2c81b97746d8"\n'
@@ -32,7 +28,7 @@ def main():
                 '#define EXPECTED_SIZE_WILDKSU 0x381\n'
                 '#define EXPECTED_HASH_WILDKSU "52d52d8c8bfbe53dc2b6ff1c613184e2c03013e090fe8905d8e3d5dc2658c2e4"')
 
-    if "EXPECTED_SIZE_KSUNEXT" in content:
+    if "EXPECTED_SIZE_MAMBOSU" in content:
         print("manager_sign.h already patched, skipping.")
     else:
         if old_sign not in content:
@@ -50,13 +46,12 @@ def main():
                '#ifdef EXPECTED_SIZE')
 
     new_apk = ('    { EXPECTED_SIZE_KOWX712, EXPECTED_HASH_KOWX712 }, // KOWX712/KernelSU\n'
-               '    { EXPECTED_SIZE_KSUNEXT, EXPECTED_HASH_KSUNEXT }, // rifsxd/KernelSU-Next\n'
                '    { EXPECTED_SIZE_MAMBOSU, EXPECTED_HASH_MAMBOSU }, // rapli/MamboSU\n'
                '    { EXPECTED_SIZE_VORTEXSU, EXPECTED_HASH_VORTEXSU }, // vortexsu/VortexSU\n'
                '    { EXPECTED_SIZE_WILDKSU, EXPECTED_HASH_WILDKSU }, // twj/WildKSU\n'
                '#ifdef EXPECTED_SIZE')
 
-    if "EXPECTED_SIZE_KSUNEXT" in content:
+    if "EXPECTED_SIZE_MAMBOSU" in content:
         print("apk_sign.c already patched, skipping.")
     else:
         if old_apk not in content:
