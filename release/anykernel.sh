@@ -21,7 +21,7 @@ if [ "${USE_AK3_CACHE}" = "true" ] && [ -d "${HOME}/ak3-cache" ]; then
     log "AnyKernel3 restored from cache ✅ ($(cache_freshness_note))"
 else
     retry 3 run_quiet git clone -q --depth=1 -b gki-2.0 \
-        https://github.com/Andrews571/AnyKernel3-SAGA.git "$TOOL_AK3_DIR" \
+        https://github.com/kaminarich/AetheriumAnykernel.git "$TOOL_AK3_DIR" \
         || error "Failed to clone AK3! (see output above)"
     mkdir -p "${HOME}/ak3-cache"
     cp -a "${TOOL_AK3_DIR}/." "${HOME}/ak3-cache/"
